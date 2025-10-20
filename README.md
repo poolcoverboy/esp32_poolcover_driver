@@ -149,10 +149,24 @@ Before you flash the firmware, you need to set a few things up.
 
 ## 5. Home Assistant Integration
 
-![Screenshot of the admin view (telemetry data)](ss_admin1.jpg)
-![Screenshot of the admin view (cover position)](ss_admin2.jpg)
-![Screenshot of the admin view (calibration and log)](ss_admin3.jpg)
-![Screenshot of the admin view](ss_main.jpg)
+<table>
+  <tr>
+    <td>
+      <img src="ss_main.jpg" alt="Screenshot of the admin view" width="400"/>
+    </td>
+    <td>
+      <img src="ss_admin1.jpg" alt="Screenshot of the admin view (telemetry data)" width="400"/>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="ss_admin2.jpg" alt="Screenshot of the admin view (cover position)" width="400"/>
+    </td>
+    <td>
+      <img src="ss_admin3.jpg" alt="Screenshot of the admin view (calibration and log)" width="400"/>
+    </td>
+  </tr>
+</table>
 
 The `configuration_appendix.yaml` and `lovelace_admin.yaml` files in this repository show you how to set up Home Assistant to work with this controller.
 
