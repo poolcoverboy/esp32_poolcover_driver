@@ -35,9 +35,10 @@ This table provides a quick overview of the hardware connections and software co
 | MQTT Password | Authenticate with your MQTT broker | Edit `src/mqtt_config.h` |
 
 Then get vscode+platformio, download or clone this repo, open the folder, push it to your esp.
----
 
-Top-level, these drivers are quite simple. I have the AN1030D (PL3210) with the Motor DL 3010, but I assume that all the drivers from this company are more or less the same from an electronic perspective.
+
+## In- and Output
+Top-level, these pool drivers are quite simple. I have the Unicum AN1030D (PL3210) with the Motor DL 3010, but I assume that all the drivers from this company are more or less the same from an electronic perspective.
 
 **Input**
 *   24V DC high power (>600W) for the DC motor.
@@ -46,8 +47,8 @@ Top-level, these drivers are quite simple. I have the AN1030D (PL3210) with the 
 *   Three thin cables from the motor to measure the position (clicks). One is ground, one you need to put on 24V, and the third is the measurement, which alternates between 0V and 24V depending on the rotational position of the motor. This needs to be optically isolated using a PC817 or whatever you like to optically isolate and transfer a signal to your ESP.
 
 **Output**
-*   Two thick cables from the motor. The polarity can be switched using the simple relay setup described below.
-*   Wi-Fi -> MQTT to Home Assistant (Lovelace examples included).
+*   Two thick cables from to the motor. The polarity can be switched using the simple relay setup described below. Or use a motor driver if you prefer, the code change is trivial.
+*   Wi-Fi -> MQTT -> Home Assistant (Lovelace examples included).
 *   Optionally, a status LED.
 
 ---
@@ -147,6 +148,11 @@ Before you flash the firmware, you need to set a few things up.
 ---
 
 ## 5. Home Assistant Integration
+
+![Screenshot of the admin view (telemetry data)](ss_admin1.jpg)
+![Screenshot of the admin view (cover position)](ss_admin2.jpg)
+![Screenshot of the admin view (calibration and log)](ss_admin3.jpg)
+![Screenshot of the admin view](ss_main.jpg)
 
 The `configuration_appendix.yaml` and `lovelace_admin.yaml` files in this repository show you how to set up Home Assistant to work with this controller.
 
