@@ -1,0 +1,360 @@
+mqtt:
+  sensor:
+    - name: "Pool Cover Mode"
+      unique_id: poolcover_mode
+      object_id: pool_cover_mode
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.mode }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Action"
+      unique_id: poolcover_action
+      object_id: pool_cover_action
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.action }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Analog Motion"
+      unique_id: poolcover_analog_motion
+      object_id: pool_cover_analog_motion
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.analog.motion }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Analog Switch"
+      unique_id: poolcover_analog_switch
+      object_id: pool_cover_analog_switch
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.analog.switch }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Position (clicks)"
+      unique_id: poolcover_pos
+      object_id: pool_cover_position_clicks
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "clicks"
+      value_template: "{{ value_json.pos }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover End (clicks)"
+      unique_id: poolcover_end
+      object_id: pool_cover_end_clicks
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "clicks"
+      value_template: "{{ value_json.end }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover WiFi RSSI"
+      unique_id: poolcover_rssi
+      object_id: pool_cover_wifi_rssi
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "dBm"
+      value_template: "{{ value_json.wifi.rssi }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device_class: signal_strength
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover IP"
+      unique_id: poolcover_ip
+      object_id: pool_cover_ip
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.wifi.ip }}"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      icon: mdi:ip-network
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Availability"
+      unique_id: poolcover_avail
+      object_id: pool_cover_availability
+      state_topic: "poolcover/tele/availability"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Log Last"
+      unique_id: poolcover_log_last
+      object_id: pool_cover_log_last
+      state_topic: "poolcover/tele/log_last"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Log Stream"
+      unique_id: poolcover_log_stream
+      object_id: pool_cover_log_stream
+      state_topic: "poolcover/tele/log_stream"
+      expire_after: 30
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Log Blob"
+      unique_id: poolcover_log_blob
+      object_id: pool_cover_log_blob
+      state_topic: "poolcover/tele/log_blob"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Position (%)"
+      unique_id: poolcover_pos_percent
+      object_id: pool_cover_position_2
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "%"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      value_template: >-
+        {% set pos = value_json.pos | float(0) %}
+        {% set end = value_json.end | float(0) %}
+        {% if end > 0 %}
+          {{ (100.0 * pos / end) | round(0) }}
+        {% else %}
+          0
+        {% endif %}
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Safety Max Runtime"
+      unique_id: poolcover_safety_max_runtime
+      object_id: poolcover_safety_max_runtime
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "s"
+      value_template: >-
+        {% set safety = value_json.safety if value_json.safety is defined else {} %}
+        {{ safety.max_run_s | default(0) | int }}
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Runtime Elapsed"
+      unique_id: poolcover_runtime_elapsed
+      object_id: poolcover_runtime_elapsed
+      state_topic: "poolcover/tele/state"
+      unit_of_measurement: "s"
+      value_template: >-
+        {% set safety = value_json.safety if value_json.safety is defined else {} %}
+        {{ safety.run_elapsed_s | default(0) | int }}
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+  binary_sensor:
+    - name: "Pool Cover HA Connected"
+      unique_id: poolcover_ha_connected
+      object_id: pool_cover_ha_connected
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ 'ON' if value_json.ha_connected else 'OFF' }}"
+      device_class: connectivity
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Keepalive"
+      unique_id: poolcover_keepalive
+      object_id: pool_cover_keepalive
+      state_topic: "poolcover/tele/heartbeat"
+      value_template: "{{ 'ON' if value_json.alive else 'OFF' }}"
+      device_class: connectivity
+      expire_after: 45
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Panic"
+      unique_id: poolcover_panic
+      object_id: pool_cover_panic
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ 'ON' if value_json.panic else 'OFF' }}"
+      device_class: safety
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Set Mode"
+      unique_id: poolcover_set_mode
+      object_id: pool_cover_set_mode
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ 'ON' if value_json.set_mode_active else 'OFF' }}"
+      device_class: running
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Runtime Guard"
+      unique_id: poolcover_runtime_guard
+      object_id: poolcover_runtime_guard
+      state_topic: "poolcover/tele/state"
+      value_template: >-
+        {% set safety = value_json.safety if value_json.safety is defined else {} %}
+        {{ 'ON' if safety.active | default(false) else 'OFF' }}
+      device_class: safety
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+  button:
+    - name: "Pool Cover Enter Set Mode"
+      unique_id: poolcover_enter_set_mode
+      object_id: pool_cover_enter_set_mode
+      command_topic: "poolcover/cmnd"
+      payload_press: '{"cmd":"enter_set_mode"}'
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Mark Fully Open"
+      unique_id: poolcover_mark_open
+      object_id: pool_cover_mark_fully_open
+      command_topic: "poolcover/cmnd"
+      payload_press: '{"cmd":"set_open_here"}'
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Mark Fully Closed"
+      unique_id: poolcover_mark_closed
+      object_id: pool_cover_mark_fully_closed
+      command_topic: "poolcover/cmnd"
+      payload_press: '{"cmd":"set_closed_here"}'
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+    - name: "Pool Cover Exit Set Mode"
+      unique_id: poolcover_exit_set_mode
+      object_id: pool_cover_exit_set_mode
+      command_topic: "poolcover/cmnd"
+      payload_press: '{"cmd":"exit_set_mode"}'
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller
+
+  number:
+    - name: "Pool Cover Max Run Time"
+      unique_id: poolcover_max_run_seconds
+      object_id: pool_cover_max_run_time
+      command_topic: "poolcover/cmnd"
+      command_template: '{"cmd":"set_max_runtime","seconds":{{ value | int }}}'
+      state_topic: "poolcover/tele/state"
+      value_template: "{{ value_json.safety.max_run_s | int }}"
+      min: 5
+      max: 360
+      step: 1
+      unit_of_measurement: "s"
+      availability_topic: "poolcover/tele/availability"
+      payload_available: "online"
+      payload_not_available: "offline"
+      device:
+        identifiers: ["poolcover-controller"]
+        name: Pool Cover Controller
+        manufacturer: Custom DIY
+        model: ESP32 Pool Cover Controller

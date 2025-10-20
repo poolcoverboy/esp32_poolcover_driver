@@ -1,0 +1,62 @@
+type: vertical-stack
+cards:
+  - type: entities
+    title: Pool Cover
+    entities:
+      - entity: sensor.pool_cover_mode
+        name: Mode
+      - entity: sensor.pool_cover_action
+        name: Action
+      - entity: binary_sensor.pool_cover_ha_connected
+        name: HA Connected
+      - entity: binary_sensor.pool_cover_controller_pool_cover_runtime_guard
+        name: Runtime Guard Active
+      - entity: sensor.pool_cover_wifi_rssi
+        name: Wi-Fi RSSI (dBm)
+      - entity: sensor.pool_cover_ip
+        name: Wi-Fi IP
+      - entity: sensor.pool_cover_controller_pool_cover_runtime_elapsed
+        name: Runtime Elapsed (s)
+
+  - type: gauge
+    name: Cover Position
+    entity: sensor.pool_cover_controller_pool_cover_position
+    min: 0
+    max: 100
+    severity:
+      green: 0
+      yellow: 50
+      red: 90
+
+  - type: grid
+    title: Motion
+    columns: 3
+    square: false
+    cards:
+      - type: button
+        name: Open (Auto)
+        icon: mdi:arrow-down-bold
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"open_auto"}'
+      - type: button
+        name: Stop
+        icon: mdi:stop-circle
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"stop"}'
+      - type: button
+        name: Close (Auto)
+        icon: mdi:arrow-up-bold
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"close_auto"}'

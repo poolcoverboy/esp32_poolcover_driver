@@ -1,0 +1,45 @@
+This project uses an ESP32 and communicates over WiFi and MQTT.
+
+### platformio.ini Configuration
+Your `platformio.ini` file should be configured for an ESP32 board and include the following libraries and build flags:
+
+```ini
+[env:esp32_32u]
+platform = espressif32
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+
+lib_deps =
+  knolleary/PubSubClient@^2.8
+  bblanchon/ArduinoJson@^6.21.3
+
+build_flags =
+  -D MQTT_MAX_PACKET_SIZE=8192
+```
+
+### WiFi Configuration (`include/wifi_config.h`)
+- **Credentials**: 
+    - `WIFI_SSID`: "YOUR_WIFI_SSID"
+    - `WIFI_PASS`: "YOUR_WIFI_PASSWORD"
+- **Networking**: Static IP is configured by default.
+    - `WIFI_STATIC_IP`: 192.168.1.175
+    - `WIFI_STATIC_GATEWAY`: 192.168.1.1
+    - `WIFI_STATIC_SUBNET`: 255.255.255.0
+    - `WIFI_STATIC_PRIMARY_DNS`: 192.168.1.1
+    - `WIFI_STATIC_SECONDARY_DNS`: 8.8.8.8
+
+### MQTT Configuration (`src/mqtt_config.h`)
+- **Broker**:
+    - `MQTT_BROKER_HOST`: "YOUR_MQTT_BROKER_IP"
+    - `MQTT_BROKER_PORT`: 1883
+    - `MQTT_USERNAME`: "YOUR_MQTT_USERNAME"
+    - `MQTT_PASSWORD`: "YOUR_MQTT_PASSWORD"
+- **Device Identity**: 
+    - `DEVICE_NAME`: "esp32-32u-poolcover"
+    - `BASE_TOPIC`: "poolcover"
+- **Topics**: The device uses a structured set of topics for different purposes:
+    - **Telemetry (`/tele/...`)**: For publishing device status, including availability, state, heartbeat, and logs.
+    - **Commands (`/cmnd`)**: For receiving commands.
+    - **Home Assistant Integration**: Subscribes to `homeassistant/status` to monitor HA's availability.
+- **Heartbeat**: A heartbeat is sent every 15 seconds.

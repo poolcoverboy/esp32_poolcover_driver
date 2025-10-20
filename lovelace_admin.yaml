@@ -1,0 +1,165 @@
+type: vertical-stack
+cards:
+  - type: entities
+    title: Pool Cover · Admin
+    entities:
+      - entity: sensor.pool_cover_mode
+        name: Mode
+      - entity: sensor.pool_cover_action
+        name: Action
+      - entity: sensor.pool_cover_analog_switch
+        name: Analog Switch
+      - entity: sensor.pool_cover_analog_motion
+        name: Analog Motion
+      - entity: binary_sensor.pool_cover_keepalive
+        name: Device Keepalive
+      - entity: binary_sensor.pool_cover_ha_connected
+        name: HA Connected
+      - entity: binary_sensor.pool_cover_set_mode
+        name: Set Mode Active
+      - entity: binary_sensor.pool_cover_panic
+        name: Panic
+      - entity: binary_sensor.pool_cover_controller_pool_cover_runtime_guard
+        name: Runtime Guard Active
+      - entity: sensor.pool_cover_wifi_rssi
+        name: Wi-Fi RSSI (dBm)
+      - entity: sensor.pool_cover_ip
+        name: Wi-Fi IP
+      - entity: sensor.pool_cover_position_clicks
+        name: Position (clicks)
+      - entity: sensor.pool_cover_end_clicks
+        name: End (clicks)
+      - entity: sensor.pool_cover_controller_pool_cover_position
+        name: Position (%)
+      - entity: sensor.pool_cover_controller_pool_cover_safety_max_runtime
+        name: Max Run Time (s)
+      - entity: sensor.pool_cover_controller_pool_cover_runtime_elapsed
+        name: Runtime Elapsed (s)
+      - entity: number.pool_cover_controller_pool_cover_max_run_time
+        name: Adjust Max Run Time
+
+  - type: gauge
+    name: Cover Position
+    entity: sensor.pool_cover_controller_pool_cover_position
+    min: 0
+    max: 100
+    severity:
+      green: 0
+      yellow: 50
+      red: 90
+
+  - type: grid
+    title: Motion (Auto)
+    columns: 3
+    square: false
+    cards:
+      - type: button
+        name: Open (Auto)
+        icon: mdi:arrow-down-bold
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"open_auto"}'
+      - type: button
+        name: Stop
+        icon: mdi:stop-circle
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"stop"}'
+      - type: button
+        name: Close (Auto)
+        icon: mdi:arrow-up-bold
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"close_auto"}'
+
+  - type: grid
+    title: Calibration & Manual
+    columns: 3
+    square: false
+    cards:
+      - type: button
+        entity: button.pool_cover_enter_set_mode
+        name: Enter Set Mode
+        icon: mdi:tune-variant
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.pool_cover_enter_set_mode
+      - type: button
+        entity: button.pool_cover_exit_set_mode
+        name: Exit Set Mode
+        icon: mdi:check-circle-outline
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.pool_cover_exit_set_mode
+      - type: button
+        entity: button.pool_cover_mark_fully_open
+        name: Mark Fully Open
+        icon: mdi:arrow-expand-horizontal
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.pool_cover_mark_fully_open
+      - type: button
+        entity: button.pool_cover_mark_fully_closed
+        name: Mark Fully Closed
+        icon: mdi:arrow-collapse-horizontal
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.pool_cover_mark_fully_closed
+      - type: button
+        name: Open (Manual)
+        icon: mdi:arrow-down-bold-circle
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"open_manually"}'
+      - type: button
+        name: Stop
+        icon: mdi:stop-circle-outline
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"stop"}'
+      - type: button
+        name: Close (Manual)
+        icon: mdi:arrow-up-bold-circle
+        tap_action:
+          action: call-service
+          service: mqtt.publish
+          data:
+            topic: poolcover/cmnd
+            payload: '{"cmd":"close_manually"}'
+
+  - type: markdown
+    title: Recent Log
+    content: >-
+      {% set blob = states('sensor.pool_cover_log_blob') %}
+      {% if blob in ['unknown', 'unavailable', ''] %}
+        {% set blob = states('sensor.pool_cover_log_last') %}
+      {% endif %}
+      {% if blob in ['unknown', 'unavailable', ''] %}
+        _No log lines yet._
+      {% else %}
+        {% set formatted = blob | replace('\r', '') %}
+        <pre style="font-family: 'Roboto Mono', monospace; font-size: 12px; margin: 0; max-height: 320px; overflow-y: auto; white-space: pre-wrap;">{{ formatted | e }}</pre>
+      {% endif %}
