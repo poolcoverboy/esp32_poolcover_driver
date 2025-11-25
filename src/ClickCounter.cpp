@@ -4,11 +4,22 @@
 #include <cstdio>
 #include <cstring>
 #include <climits>
+#include <cmath>
 #include <driver/gpio.h>
 #include <esp_intr_alloc.h>
 #include <esp_err.h>
 
 bool ClickCounter::s_isrServiceInstalled = false;
+
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+struct IntervalStatsRec {
+  uint32_t magic;
+  float meanMs;
+  float varianceMs2;
+  uint32_t sampleCount;
+  uint32_t crc32;
+};
+#endif
 
 void ClickCounter::begin(uint8_t pinClick, bool simulate) {
   _pin = pinClick;
@@ -58,6 +69,20 @@ void ClickCounter::begin(uint8_t pinClick, bool simulate) {
   _calibOpenRaw = 0;
   _calibClosedRaw = 0;
 
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  _lastAcceptedMs = 0;
+  _intervalCount = 0;
+  _intervalCount = 0;
+  _intervalIndex = 0;
+  _timeError = 0.0f;
+  for (uint8_t i = 0; i < INTERVAL_WINDOW; ++i) {
+    _intervalWindow[i] = 0;
+  }
+  applyIntervalDefaults();
+  loadIntervalStats();
+  seedIntervalWindow(intervalSeedValue());
+#endif
+
   if (_simulate) {
     _lastSimTickMs = millis();
     _sensorLiveLow = _sensorExpectedLow;
@@ -79,6 +104,10 @@ void ClickCounter::setLogger(LogFn logger) {
   _log = logger;
 }
 
+void ClickCounter::setDebugLogger(LogFn logger) {
+  _debugLog = logger;
+}
+
 void ClickCounter::setStatusLed(StatusLed* led) {
   _statusLed = led;
   if (_statusLed) {
@@ -93,6 +122,9 @@ void ClickCounter::setMotion(MotionState s) {
     _tailHoldUntil = 0;
   } else if (_motion != MotionState::IDLE && s == MotionState::IDLE) {
     _tailHoldUntil = millis() + TAIL_HOLD_MS;
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+    persistIntervalStats();
+#endif
   }
   if (s != MotionState::IDLE) {
     _lastActiveDirection = s;
@@ -129,6 +161,11 @@ void ClickCounter::setSimulation(bool simulate) {
   }
 
   _edgePhase = 0;
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  _lastAcceptedMs = 0;
+  _timeError = 0.0f;
+  seedIntervalWindow(intervalSeedValue());
+#endif
 }
 
 void ClickCounter::update(bool allowBeyondLimits) {
@@ -300,15 +337,106 @@ void ClickCounter::simulateTicks() {
 }
 
 void ClickCounter::drainHardwareEdges() {
-  uint32_t edges = 0;
+  // 1. Check if the signal has settled.
+  // If an interrupt happened recently, we might be in a transition or bounce.
+  // We wait until the line is stable for at least 30ms before processing.
+  // This acts as a "Software Debounce" / "State Verification" window.
+  uint32_t nowUs = micros();
   noInterrupts();
-  edges = _edgeCountIsr;
-  _edgeCountIsr = 0;
+  uint32_t lastUs = _lastIsrUs;
+  uint32_t edges = _edgeCountIsr;
   interrupts();
 
-  if (!edges) {
+  if (edges == 0) return;
+
+  // If the last edge was less than 30ms ago, defer processing.
+  // We want to verify the final state with digitalRead, so we need stability.
+  if ((uint32_t)(nowUs - lastUs) < 30000) {
     return;
   }
+
+  // 2. Verify State
+  // We have 'edges' pending.
+  // If edges is ODD, we expect the state to have TOGGLED.
+  // If edges is EVEN, we expect the state to be the SAME.
+  int currentLevel = digitalRead(_pin);
+  bool currentLow = (currentLevel == LOW);
+  
+  bool expectedLow = _sensorLiveLow;
+  if (edges % 2 != 0) {
+    expectedLow = !expectedLow;
+  }
+
+  if (currentLow != expectedLow) {
+    // DISCREPANCY DETECTED
+    // The ISR count does not match the physical pin state.
+    // This implies either Ghost Edges (noise) or Missed Edges.
+    
+    if (edges % 2 != 0) {
+      // We expected a toggle, but state is same.
+      // Most likely a single Ghost Edge (Noise Spike).
+      // Action: Ignore the edge(s) to match the steady state.
+      // If edges=1, we make it 0.
+      // If edges=3, we make it 2 (or 0).
+      // Safest: Reduce edges by 1 to cancel the toggle.
+      if (edges > 0) edges--;
+      
+      if (_debugLog) {
+        String dbg;
+        dbg.reserve(40);
+        dbg += F("[CLKDBG] GHOST EDGE detected. Edges=");
+        dbg += (edges + 1); // Original
+        dbg += F("->");
+        dbg += edges;
+        debugLog(dbg);
+      }
+    } else {
+      // We expected same state, but state toggled.
+      // We missed an edge!
+      // Action: Add an edge to catch up.
+      edges++;
+      
+      if (_debugLog) {
+        String dbg;
+        dbg.reserve(40);
+        dbg += F("[CLKDBG] MISSED EDGE detected. Edges=");
+        dbg += (edges - 1); // Original
+        dbg += F("->");
+        dbg += edges;
+        debugLog(dbg);
+      }
+    }
+  }
+
+  // 3. Commit changes
+  // We clear the ISR counter, but we might have modified 'edges' locally.
+  // If we deferred, we wouldn't be here.
+  noInterrupts();
+  // Careful: New edges might have arrived while we were thinking?
+  // But we checked 'lastUs' stability, so unlikely to have new valid edges.
+  // However, to be safe, we subtract the ORIGINAL 'edges' count from the global counter
+  // and then process the ADJUSTED 'edges' count.
+  // Actually, simpler: just clear global, and if new ones came, they are new.
+  // But if we "deferred" earlier, we didn't clear.
+  // Here we ARE processing. So we clear what we read.
+  // But wait, if we modify 'edges', we are diverging from ISR truth.
+  // The ISR counter should be cleared of the *read* amount.
+  // If we decide to *ignore* an edge, we just don't pass it to processEdgeBatch.
+  if (_edgeCountIsr >= edges) {
+      _edgeCountIsr = 0; // Clear all. 
+      // (Assuming no new edges came in the last few microseconds. 
+      //  If they did, we might lose them or count them next time?
+      //  If we clear 0, we lose nothing.
+      //  If we clear _edgeCountIsr, we clear everything.)
+      // Correct logic:
+      // We read 'edges' (local var) from '_edgeCountIsr' at start.
+      // We assume no new edges since then (because of stability check).
+      // So clearing _edgeCountIsr is safe.
+  } else {
+      // This case (ISR < edges) is impossible unless we messed up.
+      _edgeCountIsr = 0;
+  }
+  interrupts();
 
   processEdgeBatch(edges);
 }
@@ -327,12 +455,96 @@ void ClickCounter::processEdgeBatch(uint32_t edges) {
       bool usedTailHold = false;
       MotionState dir = computeEffectiveDirection(&usedTailHold);
 
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+      bool intervalRejected = false;
+      if (dir == MotionState::CLOSING || dir == MotionState::OPENING) {
+        unsigned long acceptMs = millis();
+        if (_lastAcceptedMs != 0) {
+          uint32_t deltaMs = static_cast<uint32_t>(acceptMs - _lastAcceptedMs);
+          bool haveMedian = (_intervalCount >= INTERVAL_MIN_SAMPLES);
+          uint16_t median = haveMedian ? intervalMedian() : 0;
+          uint32_t threshold = haveMedian
+            ? (static_cast<uint32_t>(median) * INTERVAL_RATIO_NUM) / INTERVAL_RATIO_DEN
+            : 0U;
+          if (haveMedian && threshold == 0U) {
+            threshold = 1U;
+          }
+          
+          if (haveMedian && deltaMs < threshold) {
+            intervalRejected = true;
+            if (_debugLog) {
+              String dbg;
+              dbg.reserve(40);
+              dbg += F("[CLKDBG] XF d");
+              dbg += deltaMs;
+              dbg += F(" m");
+              dbg += median;
+              debugLog(dbg);
+            }
+          } else {
+            // Cumulative Time Error Heuristic
+            if (haveMedian) {
+              int32_t diff = (int32_t)deltaMs - (int32_t)median;
+              _timeError = (_timeError * TIME_ERROR_DECAY) + (float)diff;
+
+              float limit = (float)median * 5.0f;
+              if (_timeError > limit) _timeError = limit;
+              if (_timeError < -limit) _timeError = -limit;
+
+              float thresholdErr = -1.0f * (float)median * TIME_ERROR_THRESHOLD_RATIO;
+              
+              if (_timeError < thresholdErr) {
+                intervalRejected = true;
+                if (_debugLog) {
+                  String dbg;
+                  dbg.reserve(64);
+                  dbg += F("[CLKDBG] ERR t");
+                  dbg += (int)_timeError;
+                  dbg += F(" m");
+                  dbg += median;
+                  dbg += F(" d");
+                  dbg += deltaMs;
+                  debugLog(dbg);
+                }
+              }
+            }
+
+            if (!intervalRejected) {
+              recordIntervalSample(static_cast<uint16_t>(min<uint32_t>(deltaMs, 0xFFFF)));
+            }
+          }
+        }
+        if (intervalRejected) {
+          continue;
+        }
+        _lastAcceptedMs = acceptMs;
+      } else {
+        _lastAcceptedMs = 0;
+      }
+#endif
+
       if (dir == MotionState::CLOSING) {
         _pos += 1;
         persistPos(false);
       } else if (dir == MotionState::OPENING) {
         _pos -= 1;
         persistPos(false);
+      }
+
+      if (_debugLog) {
+        String dbg;
+        dbg.reserve(28);
+        dbg += F("[CLKDBG] R");
+        char dirCode = 'I';
+        if (dir == MotionState::CLOSING) dirCode = 'C';
+        else if (dir == MotionState::OPENING) dirCode = 'O';
+        dbg += dirCode;
+        if (usedTailHold) {
+          dbg += F("t");
+        }
+        dbg += F(" p");
+        dbg += _pos;
+        debugLog(dbg);
       }
 
       if (usedTailHold) anyTailHoldUsed = true;
@@ -457,6 +669,19 @@ void ClickCounter::persistPos(bool force) {
     Serial.printf("[NVS] putBytes %s took %lums (pos=%ld)\n",
                   key, duration, static_cast<long>(_pos));
   }
+
+  if (stored == sizeof(rec) && _debugLog) {
+    String dbg;
+    dbg.reserve(32);
+    dbg += F("[CLKDBG] W#");
+    dbg += (rec.epoch % POS_SLOTS);
+    if (force) {
+      dbg += F("F");
+    }
+    dbg += F(" p");
+    dbg += _pos;
+    debugLog(dbg);
+  }
 }
 
 void ClickCounter::shiftCoordinateFrame(int32_t delta, bool adjustEnd) {
@@ -567,7 +792,151 @@ void ClickCounter::clearPendingEdges() {
   _edgeCountIsr = 0;
   _lastIsrUs = 0;
   interrupts();
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  _lastAcceptedMs = 0;
+  _timeError = 0.0f;
+  seedIntervalWindow(intervalSeedValue());
+#endif
 }
+
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+void ClickCounter::recordIntervalSample(uint16_t deltaMs) {
+  _intervalWindow[_intervalIndex] = deltaMs;
+  if (_intervalCount < INTERVAL_WINDOW) {
+    ++_intervalCount;
+  }
+  _intervalIndex = (_intervalIndex + 1) % INTERVAL_WINDOW;
+  updateIntervalStats(deltaMs);
+}
+
+uint16_t ClickCounter::intervalMedian() const {
+  if (_intervalCount == 0) return 0;
+  uint8_t n = _intervalCount;
+  if (n > INTERVAL_WINDOW) n = INTERVAL_WINDOW;
+  uint16_t temp[INTERVAL_WINDOW];
+  for (uint8_t i = 0; i < n; ++i) {
+    temp[i] = _intervalWindow[i];
+  }
+  for (uint8_t i = 0; i < n; ++i) {
+    for (uint8_t j = i + 1; j < n; ++j) {
+      if (temp[j] < temp[i]) {
+        uint16_t swap = temp[i];
+        temp[i] = temp[j];
+        temp[j] = swap;
+      }
+    }
+  }
+  return temp[n / 2];
+}
+
+void ClickCounter::seedIntervalWindow(uint16_t seedMs) {
+  _intervalIndex = 0;
+  if (seedMs == 0) {
+    memset(_intervalWindow, 0, sizeof(_intervalWindow));
+    _intervalCount = 0;
+    return;
+  }
+  for (uint8_t i = 0; i < INTERVAL_WINDOW; ++i) {
+    _intervalWindow[i] = seedMs;
+  }
+  _intervalCount = INTERVAL_WINDOW;
+}
+
+uint16_t ClickCounter::intervalSeedValue() const {
+  float mean = _intervalStats.meanMs;
+  if (!std::isfinite(mean) || mean <= 0.0f) {
+    mean = CLICK_COUNTER_INTERVAL_DEFAULT_MS;
+  }
+  float clamped = mean;
+  if (clamped < static_cast<float>(INTERVAL_MIN_SEED_MS)) clamped = INTERVAL_MIN_SEED_MS;
+  if (clamped > static_cast<float>(INTERVAL_MAX_SEED_MS)) clamped = INTERVAL_MAX_SEED_MS;
+  return static_cast<uint16_t>(clamped + 0.5f);
+}
+
+void ClickCounter::applyIntervalDefaults() {
+  _intervalStats.meanMs = CLICK_COUNTER_INTERVAL_DEFAULT_MS;
+  float stdMs = CLICK_COUNTER_INTERVAL_DEFAULT_STD_MS;
+  _intervalStats.varianceMs2 = stdMs * stdMs;
+  _intervalStats.sampleCount = 0;
+  _intervalStatsDirty = false;
+}
+
+void ClickCounter::loadIntervalStats() {
+#if CLICK_COUNTER_INTERVAL_PERSIST_ENABLED
+  if (!_prefsOpen || !_prefs.isKey(KEY_INTERVAL_STATS)) {
+    applyIntervalDefaults();
+    return;
+  }
+  IntervalStatsRec rec;
+  size_t n = _prefs.getBytes(KEY_INTERVAL_STATS, &rec, sizeof(rec));
+  if (n != sizeof(rec) || rec.magic != INTERVAL_STATS_MAGIC) {
+    applyIntervalDefaults();
+    return;
+  }
+  uint32_t crc = crc32(&rec, sizeof(rec) - sizeof(rec.crc32));
+  if (crc != rec.crc32) {
+    applyIntervalDefaults();
+    return;
+  }
+  _intervalStats.meanMs = rec.meanMs;
+  _intervalStats.varianceMs2 = rec.varianceMs2;
+  _intervalStats.sampleCount = rec.sampleCount;
+  if (!std::isfinite(_intervalStats.meanMs) || _intervalStats.meanMs <= 0.0f) {
+    applyIntervalDefaults();
+  } else {
+    _intervalStatsDirty = false;
+  }
+#else
+  applyIntervalDefaults();
+#endif
+}
+
+void ClickCounter::persistIntervalStats() {
+#if CLICK_COUNTER_INTERVAL_PERSIST_ENABLED
+  if (!_prefsOpen || !_intervalStatsDirty || _intervalStats.sampleCount < INTERVAL_MIN_SAMPLES) {
+    return;
+  }
+  IntervalStatsRec rec;
+  rec.magic = INTERVAL_STATS_MAGIC;
+  rec.meanMs = _intervalStats.meanMs;
+  rec.varianceMs2 = _intervalStats.varianceMs2;
+  rec.sampleCount = _intervalStats.sampleCount;
+  rec.crc32 = 0;
+  rec.crc32 = crc32(&rec, sizeof(rec) - sizeof(rec.crc32));
+  _prefs.putBytes(KEY_INTERVAL_STATS, &rec, sizeof(rec));
+  _intervalStatsDirty = false;
+#endif
+}
+
+void ClickCounter::updateIntervalStats(uint16_t deltaMs) {
+  float sample = static_cast<float>(deltaMs);
+  if (!std::isfinite(sample) || sample <= 0.0f) {
+    return;
+  }
+  if (_intervalStats.sampleCount == 0) {
+    _intervalStats.meanMs = sample;
+    _intervalStats.varianceMs2 = 0.0f;
+    _intervalStats.sampleCount = 1;
+    _intervalStatsDirty = true;
+    return;
+  }
+  float prevMean = _intervalStats.meanMs;
+  float alpha = INTERVAL_EWMA_ALPHA;
+  if (alpha <= 0.0f || alpha >= 1.0f) {
+    alpha = 0.12f;
+  }
+  float newMean = prevMean + alpha * (sample - prevMean);
+  float diff = sample - prevMean;
+  float newVar = (1.0f - alpha) * (_intervalStats.varianceMs2 + alpha * diff * diff);
+  if (newVar < 0.0f) newVar = 0.0f;
+  _intervalStats.meanMs = newMean;
+  _intervalStats.varianceMs2 = newVar;
+  if (_intervalStats.sampleCount < UINT32_MAX) {
+    ++_intervalStats.sampleCount;
+  }
+  _intervalStatsDirty = true;
+}
+#endif
 
 void ClickCounter::logMessage(const String& message) {
   if (!message.length()) return;
@@ -576,6 +945,11 @@ void ClickCounter::logMessage(const String& message) {
   } else {
     Serial.println(message);
   }
+}
+
+void ClickCounter::debugLog(const String& message) {
+  if (!message.length() || !_debugLog) return;
+  _debugLog(message);
 }
 
 void ClickCounter::mirrorSensorLevel() {

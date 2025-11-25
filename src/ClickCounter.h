@@ -10,6 +10,22 @@
 #define CLICK_COUNTER_USE_SIMULATION 0
 #endif
 
+#ifndef CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+#define CLICK_COUNTER_INTERVAL_FILTER_ENABLED 1
+#endif
+
+#ifndef CLICK_COUNTER_INTERVAL_PERSIST_ENABLED
+#define CLICK_COUNTER_INTERVAL_PERSIST_ENABLED 1
+#endif
+
+#ifndef CLICK_COUNTER_INTERVAL_DEFAULT_MS
+#define CLICK_COUNTER_INTERVAL_DEFAULT_MS 880.0f
+#endif
+
+#ifndef CLICK_COUNTER_INTERVAL_DEFAULT_STD_MS
+#define CLICK_COUNTER_INTERVAL_DEFAULT_STD_MS 80.0f
+#endif
+
 class StatusLed;
 
 class ClickCounter {
@@ -19,6 +35,7 @@ public:
   void begin(uint8_t pinClick = PIN_CLICK_IN,
              bool simulate = CLICK_COUNTER_USE_SIMULATION);
   void setLogger(LogFn logger);
+  void setDebugLogger(LogFn logger);
   void setStatusLed(class StatusLed* led);
   void setMotion(MotionState s);
   void update(bool allowBeyondLimits = false);
@@ -60,12 +77,27 @@ private:
 
   static constexpr const char* NAMESPACE      = "poolcover";
   static constexpr const char* KEY_END        = "end";
+  static constexpr const char* KEY_INTERVAL_STATS = "ivstats";
   static constexpr uint8_t     POS_SLOTS      = 8;
-  static constexpr uint32_t    ISR_GATE_US    = 2250;
+  static constexpr uint32_t    ISR_GATE_US    = 50000;  // 50 ms debounce between level changes
   static constexpr int32_t     SET_MIN_POS    = -512;
   static constexpr int32_t     SET_MAX_POS    = 8192;
   static constexpr int32_t     DEFAULT_END    = 256;
   static constexpr uint32_t    TAIL_HOLD_MS   = 100;
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  static constexpr uint8_t     INTERVAL_WINDOW        = 15;
+  static constexpr uint8_t     INTERVAL_MIN_SAMPLES   = 4;
+  static constexpr uint8_t     INTERVAL_RATIO_NUM     = 3;  // 60% of rolling median
+  static constexpr uint8_t     INTERVAL_RATIO_DEN     = 5;
+  static constexpr uint16_t    INTERVAL_MIN_SEED_MS   = 200;
+  static constexpr uint16_t    INTERVAL_MAX_SEED_MS   = 5000;
+  static constexpr float       INTERVAL_EWMA_ALPHA    = 0.12f;
+  static constexpr uint32_t    INTERVAL_STATS_MAGIC   = 0x494E564C; // 'INVL'
+  
+  // Cumulative time error heuristic
+  static constexpr float       TIME_ERROR_DECAY       = 0.90f;
+  static constexpr float       TIME_ERROR_THRESHOLD_RATIO = 1.5f;
+#endif
 
   void simulateTicks();
   void drainHardwareEdges();
@@ -84,11 +116,28 @@ private:
   void refreshLiveLevel();
   void clearPendingEdges();
   void logMessage(const String& message);
+  void debugLog(const String& message);
   void mirrorSensorLevel();
   void processEdgeBatch(uint32_t edges);
   MotionState computeEffectiveDirection(bool* tailHoldUsed);
   void attachHardwareIsr();
   void detachHardwareIsr();
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  struct IntervalStatsState {
+    float meanMs = CLICK_COUNTER_INTERVAL_DEFAULT_MS;
+    float varianceMs2 = CLICK_COUNTER_INTERVAL_DEFAULT_STD_MS * CLICK_COUNTER_INTERVAL_DEFAULT_STD_MS;
+    uint32_t sampleCount = 0;
+  };
+
+  void recordIntervalSample(uint16_t deltaMs);
+  uint16_t intervalMedian() const;
+  void seedIntervalWindow(uint16_t seedMs);
+  uint16_t intervalSeedValue() const;
+  void loadIntervalStats();
+  void persistIntervalStats();
+  void applyIntervalDefaults();
+  void updateIntervalStats(uint16_t deltaMs);
+#endif
 
   static void IRAM_ATTR gpioIsrThunk(void* arg);
   void IRAM_ATTR onIsr();
@@ -99,6 +148,7 @@ private:
   bool _simulate = true;
 
   LogFn _log = nullptr;
+  LogFn _debugLog = nullptr;
   StatusLed* _statusLed = nullptr;
 
   volatile uint32_t _edgeCountIsr = 0;
@@ -137,4 +187,13 @@ private:
   MotionState _lastActiveDirection = MotionState::IDLE;
   unsigned long _tailHoldUntil = 0;
   uint8_t _edgePhase = 0;
+#if CLICK_COUNTER_INTERVAL_FILTER_ENABLED
+  unsigned long _lastAcceptedMs = 0;
+  uint16_t _intervalWindow[INTERVAL_WINDOW] = {0};
+  uint8_t _intervalCount = 0;
+  uint8_t _intervalIndex = 0;
+  IntervalStatsState _intervalStats;
+  bool _intervalStatsDirty = false;
+  float _timeError = 0.0f;
+#endif
 };

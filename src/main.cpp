@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
+#include <cstring>
 #include "StatusStore.h"
 #include "WifiModule.h"
 #include "AnalogController.h"
@@ -8,6 +10,9 @@
 #include "ClickCounter.h"
 #include "StatusLed.h"
 #include "RingLogger.h"
+#include "Logging.h"
+#include "HttpConsole.h"
+#include "OtaModule.h"
 #include "pins.h"
 
 static constexpr size_t LOG_BUFFER_BYTES = 8 * 1024;
@@ -22,6 +27,8 @@ static RelaysModule* relays = nullptr;
 static MqttModule* mqtt = nullptr;
 static ClickCounter clicks;
 static StatusLed statusLed;
+static OtaModule* ota = nullptr;
+static HttpConsole httpConsole(statusStore, ringLog);
 
 static MotionState lastAnalogRaw = MotionState::IDLE;
 static MotionState lastAnalogEffective = MotionState::IDLE;
@@ -70,10 +77,17 @@ static CommandSource activeCommandSource = CommandSource::NONE;
 static bool haClearedLocally = false;
 static MotionState lastHaDesired = MotionState::IDLE;
 
+static void logLineInternal(const String& message, LogLevel level, bool explicitLevel);
 static void logLine(const String& message);
-static void logLine(const __FlashStringHelper* message) {
-  logLine(String(message));
-}
+static void logWarn(const String& message);
+static void logError(const String& message);
+static void logDebug(const String& message);
+static void logLine(const __FlashStringHelper* message) { logLine(String(message)); }
+static void logWarn(const __FlashStringHelper* message) { logWarn(String(message)); }
+static void logError(const __FlashStringHelper* message) { logError(String(message)); }
+static void logDebug(const __FlashStringHelper* message) { logDebug(String(message)); }
+static void populateHttpStatus(JsonDocument& doc);
+static String timestampLine(const String& message, unsigned long nowMs);
 
 static void triggerPanic(const char* reason, bool requestReboot);
 static void schedulePanicReboot(unsigned long now);
@@ -120,6 +134,14 @@ static const char* computeModeLabel(CommandSource source,
   if (inSetMode) return "SET";
   if (source == CommandSource::HOME_ASSISTANT) return "AUTO";
   return "LOCAL";
+}
+
+static const char* commandSourceLabel(CommandSource source) {
+  switch (source) {
+    case CommandSource::WALL_SWITCH: return "Wall Switch";
+    case CommandSource::HOME_ASSISTANT: return "Home Assistant";
+    default: return "Local";
+  }
 }
 
 static void clearHaDesiredLocal() {
@@ -290,24 +312,155 @@ static void processHaCommands() {
   }
 }
 
-static void logLine(const String& message) {
-  if (!message.length()) return;
-  if (Serial && Serial.availableForWrite() > message.length() + 2) {
-    Serial.println(message);
-  } else {
-    Serial.println(message);
+static bool startsWithLiteral(const String& value, const char* literal) {
+  if (!literal) return false;
+  size_t len = strlen(literal);
+  if (value.length() < len) return false;
+  return strncmp(value.c_str(), literal, len) == 0;
+}
+
+static LogLevel inferLogLevel(const String& message, LogLevel fallback) {
+  if (startsWithLiteral(message, "[PANIC]") ||
+      startsWithLiteral(message, "[ERROR]") ||
+      startsWithLiteral(message, "[RELAYS] Action -> ERROR") ||
+      message.indexOf(" panic") >= 0) {
+    return maxLogLevel(LogLevel::ERROR, fallback);
   }
-  ringLog.append(message);
-  if (mqtt) {
-    mqtt->publishLogLine(message);
+
+  if (startsWithLiteral(message, "[LIMIT]") ||
+      startsWithLiteral(message, "[WARN]") ||
+      startsWithLiteral(message, "[OTA] Error") ||
+      message.indexOf("Disconnected") >= 0 ||
+      message.indexOf("Failed") >= 0 ||
+      message.indexOf("failed") >= 0 ||
+      message.indexOf(" Error") >= 0) {
+    return maxLogLevel(LogLevel::WARN, fallback);
+  }
+
+  return fallback;
+}
+
+static void logLine(const String& message) {
+  logLineInternal(message, LogLevel::INFO, false);
+}
+
+static void logWarn(const String& message) {
+  logLineInternal(message, LogLevel::WARN, true);
+}
+
+static void logError(const String& message) {
+  logLineInternal(message, LogLevel::ERROR, true);
+}
+
+static void logDebug(const String& message) {
+  logLineInternal(message, LogLevel::DEBUG, true);
+}
+
+static void logLineInternal(const String& message, LogLevel level, bool explicitLevel) {
+  if (!message.length()) return;
+  unsigned long nowMs = millis();
+  LogLevel finalLevel = explicitLevel ? level : inferLogLevel(message, level);
+  String stamped = timestampLine(message, nowMs);
+  if (Serial) {
+    Serial.println(stamped);
+  }
+  ringLog.append(stamped, finalLevel);
+  if (mqtt && finalLevel >= LogLevel::WARN) {
+    mqtt->publishLogLine(stamped);
     unsigned long now = millis();
     if (lastLogSnapshotMs == 0 || now - lastLogSnapshotMs >= LOG_SNAPSHOT_INTERVAL_MS) {
       lastLogSnapshotMs = now;
-      mqtt->publishLogSnapshot(ringLog.blob());
+      mqtt->publishLogSnapshot(ringLog.blob(LogLevel::WARN));
     }
   }
 }
 
+static String timestampLine(const String& message, unsigned long nowMs) {
+  unsigned long seconds = nowMs / 1000UL;
+  unsigned long ms = nowMs % 1000UL;
+  String out;
+  out.reserve(message.length() + 18);
+  out += '[';
+  out += seconds;
+  out += '.';
+  if (ms < 100UL) out += '0';
+  if (ms < 10UL) out += '0';
+  out += ms;
+  out += F("s] ");
+  out += message;
+  return out;
+}
+
+static void populateHttpStatus(JsonDocument& doc) {
+  JsonObject telem = doc["telemetry"];
+  if (telem.isNull()) {
+    telem = doc.createNestedObject("telemetry");
+  }
+
+  const unsigned long now = millis();
+
+  telem["mode"] = lastModeLabel;
+  telem["command_source"] = commandSourceLabel(activeCommandSource);
+  telem["commanded_motion"] = motionLabel(commandedMotion);
+  telem["relay_state"] = motionLabel(relays ? relays->current() : MotionState::IDLE);
+  telem["drive_active"] = driveActive;
+  telem["drive_state"] = driveActive ? "Active" : "Idle";
+  telem["set_mode_active"] = setModeActive;
+  telem["panic"] = panicLatched;
+  telem["panic_reboot"] = panicRebootPending;
+  telem["click_simulation"] = clickSimulationEnabled;
+  telem["manual_reset_armed"] = manualResetArmed;
+  telem["uptime_s"] = static_cast<uint32_t>(now / 1000UL);
+  telem["timestamp_ms"] = now;
+
+  JsonObject analogObj = telem.createNestedObject("analog");
+  analogObj["raw_switch"] = analogSwitchLabel(lastAnalogRaw);
+  analogObj["effective_switch"] = analogSwitchLabel(lastAnalogEffective);
+  analogObj["latched"] = motionLabel(analogLatched);
+
+  JsonObject clicksObj = telem.createNestedObject("clicks");
+  int32_t pos = clicks.position();
+  int32_t span = clicks.end();
+  if (span < 1) span = 1;
+  int32_t pct = (pos <= 0) ? 0 : static_cast<int32_t>((static_cast<int64_t>(pos) * 100) / span);
+  if (pct > 100) pct = 100;
+  clicksObj["pos"] = pos;
+  clicksObj["end"] = clicks.end();
+  clicksObj["percent"] = pct;
+  clicksObj["panic"] = clicks.panic();
+  clicksObj["simulation"] = clickSimulationEnabled;
+  clicksObj["can_open"] = clicks.canOpen();
+  clicksObj["can_close"] = clicks.canClose();
+  clicksObj["guard"] = noClickMonitorActive ? "watching" : "idle";
+  if (noClickMonitorActive) {
+    clicksObj["guard_ms"] = static_cast<uint32_t>(now - noClickStartMs);
+    clicksObj["guard_origin"] = noClickPosAtEnable;
+  }
+
+  JsonObject wifiObj = telem.createNestedObject("wifi");
+  bool wifiConnected = wifi && wifi->isConnected();
+  wifiObj["connected"] = wifiConnected;
+  wifiObj["ip"] = WiFi.localIP().toString();
+  wifiObj["rssi"] = static_cast<int>(WiFi.RSSI());
+
+  JsonObject mqttObj = telem.createNestedObject("mqtt");
+  bool mqttConnected = mqtt && mqtt->isConnected();
+  mqttObj["connected"] = mqttConnected;
+  mqttObj["ha_connected"] = mqtt ? mqtt->haConnected() : false;
+
+  JsonObject safetyObj = telem.createNestedObject("safety");
+  safetyObj["max"] = safetyMaxRunSeconds;
+  uint32_t elapsedMs = driveActive ? driveAccumMs : 0;
+  safetyObj["elapsed"] = elapsedMs / 1000UL;
+  safetyObj["drive_ms"] = elapsedMs;
+  safetyObj["no_click_guard"] = noClickMonitorActive;
+  safetyObj["no_click_guard_ms"] = noClickMonitorActive ? static_cast<uint32_t>(now - noClickStartMs) : 0;
+  safetyObj["no_click_window_ms"] = NO_CLICK_PANIC_WINDOW_MS;
+
+  telem["logged_open_limit"] = loggedOpenLimit;
+  telem["logged_close_limit"] = loggedCloseLimit;
+  telem["mqtt_set_mode_streak"] = mqttSetModeStreak;
+}
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -339,6 +492,9 @@ void setup() {
   wifi = new WifiModule(statusStore, logLine);
   wifi->begin();
 
+  ota = new OtaModule(logLine);
+  ota->begin();
+
   analogCtl = new AnalogController(statusStore, "Analog",
                                    PIN_BTN_UP, PIN_BTN_DOWN, true);
   analogCtl->begin();
@@ -353,16 +509,23 @@ void setup() {
   clicks.setStatusLed(&statusLed);
   clicks.begin(PIN_CLICK_IN, /*simulate=*/false);
   clicks.setLogger(logLine);
+  clicks.setDebugLogger(logDebug);
   clickSimulationEnabled = false;
   logLine(F("[BOOT] Click counter ready (hardware ISR)"));
 
   logLine(F("[INIT] Modules initialized. Waiting for Wi-Fi/MQTT..."));
+
+  httpConsole.setStatusCallback(populateHttpStatus);
+  httpConsole.begin();
+  logLine(F("[HTTP] Status console ready at http://<device-ip>/"));
 }
 
 void loop() {
   unsigned long now = millis();
 
   if (wifi) wifi->update();
+  bool wifiConnected = wifi && wifi->isConnected();
+  if (ota) ota->update(wifiConnected);
 
   MotionState analogState = lastAnalogEffective;
   if (analogCtl) {
@@ -577,7 +740,6 @@ void loop() {
   if (pct > 100) pct = 100;
 
   StatusLed::Pattern ledPattern = StatusLed::Pattern::IDLE;
-  bool wifiConnected = wifi && wifi->isConnected();
   bool mqttConnected = mqtt && mqtt->isConnected();
   if (panicLatched || panicRebootPending) {
     ledPattern = StatusLed::Pattern::PANIC;
@@ -619,7 +781,7 @@ void loop() {
 
     bool connected = mqtt->isConnected();
     if (connected && !lastMqttConnected) {
-      mqtt->publishLogSnapshot(ringLog.blob());
+      mqtt->publishLogSnapshot(ringLog.blob(LogLevel::WARN));
     }
     lastMqttConnected = connected;
   }
@@ -635,6 +797,7 @@ void loop() {
   }
 
   statusLed.update();
+  httpConsole.update();
 
   delay(5);
 }

@@ -1,10 +1,10 @@
 #pragma once
 
 // ---- MQTT broker (Home Assistant typically runs Mosquitto add-on) ----
-#define MQTT_BROKER_HOST   "YOUR_MQTT_BROKER_IP"
+#define MQTT_BROKER_HOST   "YOUR_MQTT_BROKER_IP"   // <-- set to your HA/Mosquitto IP
 #define MQTT_BROKER_PORT   1883
-#define MQTT_USERNAME      "YOUR_MQTT_USERNAME"
-#define MQTT_PASSWORD      "YOUR_MQTT_PASSWORD"
+#define MQTT_USERNAME      "YOUR_MQTT_USERNAME"         // optional ("" for none)
+#define MQTT_PASSWORD      "YOUR_MQTT_PASSWORD"         // optional ("" for none)
 
 // ---- Device identity & topics ----
 #define DEVICE_NAME        "esp32-32u-poolcover"

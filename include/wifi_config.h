@@ -1,8 +1,8 @@
 #pragma once
 
 // ***** REQUIRED *****
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASS "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID "YOUR_SSID"
+#define WIFI_PASS "YOUR_PASSWORD"
 
 // ***** OPTIONAL HINTS *****
 // If you know the exact AP channel, set 1..13; else leave 0 to auto-learn.

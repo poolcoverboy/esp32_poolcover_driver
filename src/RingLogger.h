@@ -1,49 +1,54 @@
 #pragma once
 #include <Arduino.h>
 #include <deque>
+#include "Logging.h"
 
 class RingLogger {
 public:
+  struct Entry {
+    String line;
+    LogLevel level;
+  };
+
   explicit RingLogger(size_t maxBytes = 6 * 1024) : _maxBytes(maxBytes) {}
 
-  // Append one full line (adds newline if missing)
-  void append(const String& line) {
+  void append(const String& line, LogLevel level) {
     String s = line;
     if (!s.endsWith("\n")) s += "\n";
     const size_t len = s.length();
-    // Evict oldest until it fits
     while ((_totalBytes + len) > _maxBytes && !_lines.empty()) {
-      _totalBytes -= _lines.front().length();
+      _totalBytes -= _lines.front().line.length();
       _lines.pop_front();
     }
-    _lines.push_back(std::move(s));
     _totalBytes += len;
-    _dirty = true;
+    _lines.push_back(Entry{std::move(s), level});
+    ++_revision;
   }
 
-  // Compose a single multi-line blob; cheap if unchanged
-  String blob() {
-    if (!_dirty && _cachedValid) return _cached;
-    String out; out.reserve(_totalBytes + 16);
-    for (auto &l : _lines) out += l;
-    _cached = std::move(out);
-    _cachedValid = true;
-    _dirty = false;
-    return _cached;
-  }
-
-  void clear() {
-    _lines.clear(); _totalBytes = 0;
-    _dirty = true; _cachedValid = false; _cached = "";
+  String blob(LogLevel minLevel = LogLevel::DEBUG) const {
+    String out;
+    out.reserve(_totalBytes + 16);
+    for (const auto& entry : _lines) {
+      if (entry.level >= minLevel) {
+        out += entry.line;
+      }
+    }
+    return out;
   }
 
   size_t sizeBytes() const { return _totalBytes; }
+  size_t lineCount() const { return _lines.size(); }
+  uint32_t revision() const { return _revision; }
+
+  void clear() {
+    _lines.clear();
+    _totalBytes = 0;
+    _revision = 0;
+  }
 
 private:
-  std::deque<String> _lines;
+  std::deque<Entry> _lines;
   size_t _maxBytes;
   size_t _totalBytes{0};
-  bool _dirty{true};
-  bool _cachedValid{false};
-  String _cached;
+  uint32_t _revision{0};
 };
